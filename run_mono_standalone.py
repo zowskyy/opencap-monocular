@@ -27,6 +27,8 @@ from utils.utilsCameraPy3 import getVideoRotation
 from utils.tracking_filters import InsufficientFullBodyKeypointsError
 from utils.video_intake import (
     probe_video,
+    compute_frame_histograms,
+    detect_shot_boundaries,
     validate_video_info,
     write_fallback_intrinsics,
     DEFAULT_HFOV_DEG,
@@ -135,6 +137,18 @@ def run_mono_standalone(
     video_info = validate_video_info(probe_video(video_path))
     for w in video_info.warnings:
         logger.warning(f"Video intake: {w}")
+
+    shot_cuts = []
+    try:
+        shot_cuts = detect_shot_boundaries(compute_frame_histograms(video_path))
+    except Exception as e:
+        logger.warning(f"Shot detection skipped: {e}")
+    if shot_cuts:
+        video_info.warnings.append(
+            f"Shot cuts detected at frames {shot_cuts}; results across cuts are "
+            "unreliable. Trim the video to a single continuous shot."
+        )
+        logger.warning(video_info.warnings[-1])
 
     if not intrinsics_path and hfov_deg is None:
         intrinsics_path = resolve_intrinsics_from_metadata(metadata, repo_path)
@@ -470,6 +484,7 @@ def run_mono_standalone(
                     "n_frames": video_info.n_frames,
                     "static_cam": static_cam,
                     "activity": activity,
+                    "shot_cuts": shot_cuts,
                     "warnings": video_info.warnings,
                     "ik_succeeded": ik_motion_file is not None,
                     "visualization_created": visualization_created,
