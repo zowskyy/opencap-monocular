@@ -91,5 +91,26 @@ class TestSubject(unittest.TestCase):
         self.assertEqual(ss.valid_segments([True] * 3, min_len=10), [])
 
 
+class TestNormalise(unittest.TestCase):
+    def test_ffmpeg_args(self):
+        a = vi.build_ffmpeg_args("in.mp4", "out.avi", 0.5, 30, 10, 20)
+        j = " ".join(a)
+        self.assertIn("select='gte(n,10)*lt(n,20)'", j)
+        self.assertIn("scale=trunc(iw*0.5/2)*2", j)
+        self.assertIn("-r 30", j)
+        plain = vi.build_ffmpeg_args("in.mp4", "out.avi")
+        self.assertNotIn("-vf", plain)
+
+    def test_prepare_noop(self):
+        info = vi.VideoInfo(1280, 720, 30, 100, 3.0)
+        self.assertEqual(vi.prepare_video("in.mp4", "out.avi", info), "in.mp4")
+
+    def test_exif_focal(self):
+        meta = {"streams": [{"tags": {"FocalLengthIn35mmFilm": "26"}}]}
+        self.assertEqual(vi.read_focal_35mm(meta), 26.0)
+        self.assertIsNone(vi.read_focal_35mm({"streams": [{}]}))
+        self.assertAlmostEqual(vi.focal_from_exif(26, 1920, 1080), 26 / 36 * 1920)
+
+
 if __name__ == "__main__":
     unittest.main()

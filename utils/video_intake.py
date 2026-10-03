@@ -227,3 +227,77 @@ def write_fallback_intrinsics(
     with open(out_path, "wb") as f:
         pickle.dump(data, f)
     return out_path
+
+
+# ------------------------------------------------------- normalisation ----
+
+def read_focal_35mm(meta: dict) -> Optional[float]:
+    """Best-effort 35mm-equivalent focal length (mm) from probe tags."""
+    keys = ("focallengthin35mmfilm", "focal_length_35mm", "focallength35mm")
+    tag_dicts = [meta.get("format", {}).get("tags", {}) or {}]
+    tag_dicts += [s.get("tags", {}) or {} for s in meta.get("streams", [])]
+    for tags in tag_dicts:
+        for k, v in tags.items():
+            if k.lower().replace("-", "_").replace(" ", "") in keys:
+                try:
+                    val = float(str(v).split()[0])
+                except (ValueError, IndexError):
+                    continue
+                if val > 0:
+                    return val
+    return None
+
+
+def build_ffmpeg_args(
+    src: str,
+    dst: str,
+    scale: float = 1.0,
+    fps: Optional[float] = None,
+    start_frame: Optional[int] = None,
+    end_frame: Optional[int] = None,
+) -> List[str]:
+    """ffmpeg command normalising a video to constant fps / bounded size and
+    optionally trimming to the half-open frame range [start_frame, end_frame).
+
+    ffmpeg applies display rotation when re-encoding, so the output is upright.
+    """
+    filters = []
+    if start_frame is not None or end_frame is not None:
+        sel = f"gte(n,{start_frame or 0})"
+        if end_frame is not None:
+            sel += f"*lt(n,{end_frame})"
+        filters += [f"select='{sel}'", "setpts=N/FRAME_RATE/TB"]
+    if scale < 1.0:
+        filters.append(f"scale=trunc(iw*{scale}/2)*2:trunc(ih*{scale}/2)*2")
+    args = ["ffmpeg", "-loglevel", "error", "-y", "-i", src]
+    if filters:
+        args += ["-vf", ",".join(filters)]
+    if fps:
+        args += ["-r", f"{fps:g}"]
+    args += ["-an", "-q:v", "0", dst]
+    return args
+
+
+def prepare_video(
+    src: str,
+    dst: str,
+    info: VideoInfo,
+    max_long_side: int = 1920,
+    start_frame: Optional[int] = None,
+    end_frame: Optional[int] = None,
+    force: bool = False,
+) -> str:
+    """Normalise/trim ``src`` into ``dst`` (.avi). Returns ``src`` untouched if
+    nothing needs to change."""
+    import subprocess
+
+    scale = normalization_scale(info, max_long_side)
+    trimmed = start_frame is not None or end_frame is not None
+    fps = info.fps if info.is_variable_fps and info.fps else None
+    if not (force or trimmed or scale < 1.0 or fps):
+        return src
+    os.makedirs(os.path.dirname(os.path.abspath(dst)), exist_ok=True)
+    subprocess.run(
+        build_ffmpeg_args(src, dst, scale, fps, start_frame, end_frame), check=True
+    )
+    return dst

@@ -27,6 +27,10 @@ from utils.utilsCameraPy3 import getVideoRotation
 from utils.tracking_filters import InsufficientFullBodyKeypointsError
 from utils.video_intake import (
     probe_video,
+    prepare_video,
+    split_into_shots,
+    read_focal_35mm,
+    focal_from_exif,
     compute_frame_histograms,
     detect_shot_boundaries,
     validate_video_info,
@@ -106,6 +110,7 @@ def run_mono_standalone(
     activity: Optional[str] = None,
     hfov_deg: Optional[float] = None,
     static_cam: bool = True,
+    split_shots: bool = True,
 ):
     """
     Run the mono pipeline standalone (without API).
@@ -123,6 +128,8 @@ def run_mono_standalone(
         hfov_deg: Optional horizontal field of view (long side) in degrees. If set,
             or if no device intrinsics can be resolved, intrinsics are generated from
             this FOV (default 63) so arbitrary videos can be processed.
+        split_shots: If shot cuts are detected, process each continuous shot as its own
+            clip and return {"shots": [...]} with one result (or error) per shot.
         static_cam: Assume a fixed camera; set False for handheld/moving cameras.
 
     Returns:
@@ -145,22 +152,76 @@ def run_mono_standalone(
         logger.warning(f"Shot detection skipped: {e}")
     if shot_cuts:
         video_info.warnings.append(
-            f"Shot cuts detected at frames {shot_cuts}; results across cuts are "
-            "unreliable. Trim the video to a single continuous shot."
+            f"Shot cuts detected at frames {shot_cuts}"
+            + ("; processing each shot separately" if split_shots else
+               "; results across cuts are unreliable")
         )
         logger.warning(video_info.warnings[-1])
+
+    if shot_cuts and split_shots:
+        shots = split_into_shots(video_info.n_frames, shot_cuts)
+        clip_dir = os.path.join(repo_path, "results", "_shots")
+        base = session_id or f"{int(time.time())}"
+        shot_results = []
+        for i, (a, b) in enumerate(shots):
+            clip = prepare_video(
+                video_path,
+                os.path.join(clip_dir, f"{base}_shot{i}.avi"),
+                video_info,
+                start_frame=a,
+                end_frame=b,
+            )
+            try:
+                res = run_mono_standalone(
+                    clip, metadata_path, calib_path, intrinsics_path,
+                    estimate_local_only, rerun, f"{base}_shot{i}", activity,
+                    hfov_deg, static_cam, split_shots=False,
+                )
+            except Exception as e:
+                logger.error(f"Shot {i} ({a}-{b}) failed: {e}")
+                res = {"error": str(e), "aborted": True}
+            res.update({"shot_index": i, "start_frame": a, "end_frame": b})
+            shot_results.append(res)
+        return {
+            "message": f"Processed {len(shots)} shots",
+            "shots": shot_results,
+            "shot_cuts": shot_cuts,
+        }
+
+    normalized = prepare_video(
+        video_path,
+        os.path.join(
+            repo_path, "results", "_normalized",
+            os.path.splitext(os.path.basename(video_path))[0] + ".avi",
+        ),
+        video_info,
+    )
+    if normalized != video_path:
+        logger.info(f"Normalised video written to {normalized}")
+        video_path = normalized
+        video_info = validate_video_info(probe_video(video_path))
 
     if not intrinsics_path and hfov_deg is None:
         intrinsics_path = resolve_intrinsics_from_metadata(metadata, repo_path)
         if not os.path.exists(intrinsics_path):
-            hfov_deg = DEFAULT_HFOV_DEG
             intrinsics_path = None
+    exif_focal_px = None
+    if not intrinsics_path and hfov_deg is None:  # try EXIF-style focal tags
+        try:
+            import ffmpeg
+
+            f35 = read_focal_35mm(ffmpeg.probe(video_path))
+            if f35:
+                exif_focal_px = focal_from_exif(f35, video_info.width, video_info.height)
+        except Exception:
+            pass
     if not intrinsics_path:
         intrinsics_path = write_fallback_intrinsics(
             video_info,
             os.path.join(repo_path, "results", "_fallback_intrinsics",
                          f"{os.path.basename(video_path)}_{hfov_deg}.pickle"),
             hfov_deg=hfov_deg or DEFAULT_HFOV_DEG,
+            focal_px=exif_focal_px,
         )
         logger.warning(f"Using FOV-based fallback intrinsics: {intrinsics_path}")
 
