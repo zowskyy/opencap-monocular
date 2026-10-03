@@ -7,6 +7,7 @@ Usage:
     python run_mono_standalone.py
 """
 
+import json
 import os
 import time
 import yaml
@@ -102,6 +103,7 @@ def run_mono_standalone(
     session_id: Optional[str] = None,
     activity: Optional[str] = None,
     hfov_deg: Optional[float] = None,
+    static_cam: bool = True,
 ):
     """
     Run the mono pipeline standalone (without API).
@@ -119,6 +121,7 @@ def run_mono_standalone(
         hfov_deg: Optional horizontal field of view (long side) in degrees. If set,
             or if no device intrinsics can be resolved, intrinsics are generated from
             this FOV (default 63) so arbitrary videos can be processed.
+        static_cam: Assume a fixed camera; set False for handheld/moving cameras.
 
     Returns:
         Dictionary with results similar to the API response
@@ -302,7 +305,7 @@ def run_mono_standalone(
         "run_opensim_original_wham": True,
         "run_opensim_opt2": True,
         "use_gpu": True,
-        "static_cam": True,  # Static camera (fixed in optimization.py); use False for moving camera
+        "static_cam": static_cam,
         "n_iter_opt2": 75,
         "print_loss_terms": False,
         "plotting": True,
@@ -455,8 +458,32 @@ def run_mono_standalone(
         f.write(request_hash)
     logger.info(f"Stored request hash {request_hash} for future reference")
 
+    report_path = os.path.join(results_path, "clip_report.json")
+    try:
+        with open(report_path, "w") as f:
+            json.dump(
+                {
+                    "video": os.path.basename(video_path),
+                    "width": video_info.width,
+                    "height": video_info.height,
+                    "fps": video_info.fps,
+                    "n_frames": video_info.n_frames,
+                    "static_cam": static_cam,
+                    "activity": activity,
+                    "warnings": video_info.warnings,
+                    "ik_succeeded": ik_motion_file is not None,
+                    "visualization_created": visualization_created,
+                },
+                f,
+                indent=2,
+            )
+    except OSError as e:
+        logger.warning(f"Could not write clip report: {e}")
+        report_path = None
+
     response = {
         "message": "Mono pipeline completed successfully!",
+        "clip_report_path": report_path,
         "ik_file_path": output_paths.get("ik_results_file"),
         "json_file_path": jsonOutputPath,
         "video_file_path": output_paths.get("trimmed_video"),
