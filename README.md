@@ -41,6 +41,10 @@ See **[installation/INSTALL_SLIM.md](installation/INSTALL_SLIM.md)** for step-by
 
 ---
 
+## Arbitrary single-view videos
+
+`utils/video_intake.py` validates videos (resolution, fps, variable frame rate, rotation), detects shot cuts and builds fallback camera intrinsics from a field-of-view prior (`hfov_deg` in `run_mono_standalone`, default 63°) when no device calibration exists. `utils/subject_selection.py` picks the target person (track id, click or largest), re-links lost tracks and flags truncated frames. Tests: `python -m unittest tests.test_video_intake`.
+
 ## Pipeline
 
 1. Video preprocessing & rotation correction

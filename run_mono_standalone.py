@@ -24,6 +24,12 @@ from visualization.automation import automate_recording
 from utils.convert_to_avi import convert_to_avi
 from utils.utilsCameraPy3 import getVideoRotation
 from utils.tracking_filters import InsufficientFullBodyKeypointsError
+from utils.video_intake import (
+    probe_video,
+    validate_video_info,
+    write_fallback_intrinsics,
+    DEFAULT_HFOV_DEG,
+)
 
 # Import enhanced logging (optional)
 try:
@@ -95,6 +101,7 @@ def run_mono_standalone(
     rerun: bool = False,
     session_id: Optional[str] = None,
     activity: Optional[str] = None,
+    hfov_deg: Optional[float] = None,
 ):
     """
     Run the mono pipeline standalone (without API).
@@ -109,6 +116,9 @@ def run_mono_standalone(
         rerun: Whether to rerun even if cached results exist
         session_id: Optional session ID to use as case_id
         activity: Optional activity type (e.g., "walking", "sitting")
+        hfov_deg: Optional horizontal field of view (long side) in degrees. If set,
+            or if no device intrinsics can be resolved, intrinsics are generated from
+            this FOV (default 63) so arbitrary videos can be processed.
 
     Returns:
         Dictionary with results similar to the API response
@@ -117,8 +127,25 @@ def run_mono_standalone(
     with open(metadata_path, "r") as f:
         metadata = yaml.safe_load(f)
 
-    if not intrinsics_path:
+    if not os.path.exists(video_path):
+        raise FileNotFoundError(f"Video file does not exist: {video_path}")
+    video_info = validate_video_info(probe_video(video_path))
+    for w in video_info.warnings:
+        logger.warning(f"Video intake: {w}")
+
+    if not intrinsics_path and hfov_deg is None:
         intrinsics_path = resolve_intrinsics_from_metadata(metadata, repo_path)
+        if not os.path.exists(intrinsics_path):
+            hfov_deg = DEFAULT_HFOV_DEG
+            intrinsics_path = None
+    if not intrinsics_path:
+        intrinsics_path = write_fallback_intrinsics(
+            video_info,
+            os.path.join(repo_path, "results", "_fallback_intrinsics",
+                         f"{os.path.basename(video_path)}_{hfov_deg}.pickle"),
+            hfov_deg=hfov_deg or DEFAULT_HFOV_DEG,
+        )
+        logger.warning(f"Using FOV-based fallback intrinsics: {intrinsics_path}")
 
     height_m = metadata.get("height_m", 1.70)  # Default height if not found
     mass_kg = metadata.get("mass_kg", 70.0)  # Default mass if not found
