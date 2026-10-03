@@ -586,35 +586,40 @@ def run_mono_standalone(
 
 
 if __name__ == "__main__":
-    # Example usage - modify these paths as needed
-    # You can set breakpoints anywhere in the run_mono_standalone function
+    import argparse
 
-    video_path = "tr1.mov"
-    metadata_path = "tr1.yaml"
-    calib_path = "calib.txt"
-    # intrinsics_path: omit or None to resolve from metadata iphoneModel.Cam0 (mono_api behavior)
+    ap = argparse.ArgumentParser(description="Run OpenCap Monocular on a single-view video")
+    ap.add_argument("video")
+    ap.add_argument("metadata", help="metadata YAML (height_m, mass_kg, sex)")
+    ap.add_argument("--calib", default="calib.txt")
+    ap.add_argument("--intrinsics", default=None)
+    ap.add_argument("--hfov", type=float, default=None, help="horizontal FOV (deg) prior")
+    ap.add_argument("--activity", default=None)
+    ap.add_argument("--moving-camera", action="store_true")
+    ap.add_argument("--no-split-shots", action="store_true")
+    ap.add_argument("--rerun", action="store_true")
+    ap.add_argument("--session-id", default=None)
+    args = ap.parse_args()
 
-    # Optional: Initialize WHAM model (similar to API startup)
     try:
         from WHAM.demo import initialize_wham
 
         logger.info("Loading WHAM model...")
         initialize_wham()
-        logger.info("WHAM model loaded successfully.")
     except Exception as e:
         logger.warning(f"Could not initialize WHAM model: {e}")
 
-    # Run the pipeline
     result = run_mono_standalone(
-        video_path=video_path,
-        metadata_path=metadata_path,
-        calib_path=calib_path,
+        video_path=args.video,
+        metadata_path=args.metadata,
+        calib_path=args.calib,
+        intrinsics_path=args.intrinsics,
         estimate_local_only=True,
-        rerun=False,
-        session_id="treadmill_dev",
-        activity="treadmill",
+        rerun=args.rerun,
+        session_id=args.session_id,
+        activity=args.activity,
+        hfov_deg=args.hfov,
+        static_cam=not args.moving_camera,
+        split_shots=not args.no_split_shots,
     )
-
-    # Print results
-    logger.info("Pipeline completed!")
     logger.info(f"Results: {result}")

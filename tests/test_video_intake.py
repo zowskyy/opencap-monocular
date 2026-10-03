@@ -114,3 +114,13 @@ class TestNormalise(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestConfidence(unittest.TestCase):
+    def test_conf(self):
+        from utils import confidence as cf
+
+        c = cf.frame_confidence([[1, 1], [0.2, 0.2], [1, 1]], [True, True, False])
+        self.assertEqual(c, [1.0, 0.2, 0.0])
+        self.assertEqual(cf.low_confidence_segments(c, 0.5, 1), [(1, 3)])
+        self.assertEqual(cf.low_confidence_segments(c, 0.5, 3), [])
